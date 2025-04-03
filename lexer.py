@@ -1,0 +1,158 @@
+import ply.lex as lex
+import re
+
+reserved = {
+    'funk': 'FUNK',
+    'return': 'RETURN',
+    'if': 'IF',
+    'else': 'ELSE',
+    'while': 'WHILE',
+    'for': 'FOR',
+    'to': 'TO',
+    'begin': 'BEGIN',
+    'end': 'END',
+    'int': 'INT',
+    'vector': 'VECTOR',
+    'str': 'STR',
+    'mstr': 'MSTR',
+    'bool': 'BOOL',
+    'null': 'NULL',
+    'length': 'LEN',
+    'as': 'AS',
+    'do': 'DO'
+}
+
+tokens = (
+    'NUMBER', 'PLUS', 'MINUS', 'MULTIPLY', 'DIVIDE', 'LPAREN', 'RPAREN',
+    'LCURLYEBR', 'RCURLYEBR', 'LSQBR', 'RSQBR', 'LDBLBR', 'RDBLBR',
+    'SEMI_COLON', 'EQUAL', 'ID', 'COMMENT', 'STRING', 'MSTRING',
+    'LESS_THAN', 'GREATER_THAN', 'COLON_COLON', 'COLON', 'QUESTION',
+    'COMMA', 'NOT', 'AND', 'OR', 'EQ', 'NEQ', 'LTE', 'GTE', 'ARROW',
+    'FUNK', 'RETURN', 'IF', 'ELSE', 'WHILE', 'FOR', 'TO', 'BEGIN', 'END', 'DO',
+    'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS'
+)
+
+
+def remove_nested_comments(input_text):
+    protected_strings = []
+    string_pattern = r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\''
+
+    def replace_strings(match):
+        protected_strings.append(match.group(0))
+        return f"__STRING_PLACEHOLDER_{len(protected_strings) - 1}__"
+
+    text_without_strings = re.sub(string_pattern, replace_strings, input_text)
+
+    result = list(text_without_strings)
+    i = 0
+    while i < len(result):
+        if i + 1 < len(result) and result[i] == '<' and result[i + 1] == '/':
+            comment_start = i
+            i += 2
+            nesting_level = 1
+
+            while i < len(result) and nesting_level > 0:
+                if i + 1 < len(result) and result[i] == '<' and result[i + 1] == '/':
+                    nesting_level += 1
+                    i += 2
+                elif i + 1 < len(result) and result[i] == '/' and result[i + 1] == '>':
+                    nesting_level -= 1
+                    i += 2
+                else:
+                    i += 1
+
+            if nesting_level == 0:
+                for j in range(comment_start, i):
+                    if result[j] != '\n':
+                        result[j] = ' '
+            else:
+                i = comment_start + 1
+        else:
+            i += 1
+
+    result = ''.join(result)
+
+    for idx, s in enumerate(protected_strings):
+        result = result.replace(f"__STRING_PLACEHOLDER_{idx}__", s)
+
+    return result
+
+
+def t_MSTRING(t):
+    r'"""[\s\S]*?"""'
+    return t
+
+
+def t_STRING(t):
+    r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\''
+    return t
+
+
+t_PLUS = r'\+'
+t_MINUS = r'\-'
+t_MULTIPLY = r'\*'
+t_DIVIDE = r'\/'
+t_LPAREN = r'\('
+t_RPAREN = r'\)'
+t_LSQBR = r'\['
+t_RSQBR = r'\]'
+t_LDBLBR = r'\[\['
+t_RDBLBR = r'\]\]'
+t_LCURLYEBR = r'\{'
+t_RCURLYEBR = r'\}'
+t_SEMI_COLON = r';'
+t_EQUAL = r'='
+t_COLON_COLON = r'::'
+t_COLON = r':'
+t_QUESTION = r'\?'
+t_COMMA = r','
+t_ARROW = r'=>'
+
+t_EQ = r'=='
+t_NEQ = r'!='
+t_LTE = r'<='
+t_GTE = r'>='
+t_LESS_THAN = r'<'
+t_GREATER_THAN = r'>'
+t_AND = r'\&\&'
+t_OR = r'\|\|'
+t_NOT = r'!'
+
+t_NUMBER = r'\d+'
+
+
+def t_ID(t):
+    r'[a-zA-Z_][a-zA-Z_0-9]*'
+    t.type = reserved.get(t.value, 'ID')
+    return t
+
+
+def t_newline(t):
+    r'\n+'
+    t.lexer.lineno += len(t.value)
+
+
+def t_whitespace(t):
+    r'[ \t]+'
+    pass
+
+
+def t_error(t):
+    print(f"Illegal character '{t.value[0]}' at line {t.lineno}")
+    t.lexer.skip(1)
+
+
+lexer = lex.lex()
+
+
+def tokenize(input_text):
+    processed_text = remove_nested_comments(input_text)
+    lexer.input(processed_text)
+    lexer.lineno = 1
+    tokens_list = []
+    while True:
+        tok = lexer.token()
+        if not tok:
+            break
+        tokens_list.append(tok)
+    return tokens_list
