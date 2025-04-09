@@ -29,11 +29,11 @@ tokens = (
     'LESS_THAN', 'GREATER_THAN', 'COLON_COLON', 'COLON', 'QUESTION',
     'COMMA', 'NOT', 'AND', 'OR', 'EQ', 'NEQ', 'LTE', 'GTE', 'ARROW',
     'FUNK', 'RETURN', 'IF', 'ELSE', 'WHILE', 'FOR', 'TO', 'BEGIN', 'END', 'DO',
-    'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS'
+    'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS', 'ERROR'
 )
 
 
-def remove_nested_comments(input_text):
+def remove_comments(input_text):
     protected_strings = []
     string_pattern = r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\''
 
@@ -138,15 +138,63 @@ def t_whitespace(t):
 
 
 def t_error(t):
-    print(f"Illegal character '{t.value[0]}' at line {t.lineno}")
+    error_patterns = {
+        '@': r'@[a-zA-Z_][a-zA-Z_0-9]*',
+        '#': r'#[a-zA-Z_][a-zA-Z_0-9]*',
+        '$': r'\$[a-zA-Z_][a-zA-Z_0-9]*',
+        '`': r'`.*?`',
+        '%': r'%',
+        '~': r'~',
+        '^': r'\^',
+        '\\': r'\\',
+        '""': r'""[^"]',
+        "''": r"''[^']",
+    }
+
+    if t.value[0] in ["'", '"']:
+        if t.value[0] == '"' and len(t.value) >= 3 and t.value[:3] == '"""':
+            match = re.match(r'"""[^"]*', t.value)
+            if match:
+                illegal_token = match.group(0)
+                print(f"Unclosed multi-line string '{illegal_token}' at line {t.lexer.lineno}")
+                t.type = 'ERROR'
+                t.value = illegal_token
+                t.lexer.skip(len(illegal_token))
+                return t
+        else:
+            delimiter = t.value[0]
+            match = re.match(rf'{delimiter}[^{delimiter}\\]*(?:\\.[^{delimiter}\\]*)*', t.value)
+            if match:
+                illegal_token = match.group(0)
+                print(f"Unclosed string '{illegal_token}' at line {t.lexer.lineno}")
+                t.type = 'ERROR'
+                t.value = illegal_token
+                t.lexer.skip(len(illegal_token))
+                return t
+
+    for first_char, pattern in error_patterns.items():
+        if t.value.startswith(first_char):
+            match = re.match(pattern, t.value)
+            if match:
+                illegal_token = match.group(0)
+                print(f"Illegal token '{illegal_token}' at line {t.lexer.lineno}")
+                t.type = 'ERROR'
+                t.value = illegal_token
+                t.lexer.skip(len(illegal_token))
+                return t
+
+    print(f"Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
+    t.type = 'ERROR'
+    t.value = t.value[0]
     t.lexer.skip(1)
+    return t
 
 
 lexer = lex.lex()
 
 
 def tokenize(input_text):
-    processed_text = remove_nested_comments(input_text)
+    processed_text = remove_comments(input_text)
     lexer.input(processed_text)
     lexer.lineno = 1
     tokens_list = []
