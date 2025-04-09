@@ -80,11 +80,13 @@ def remove_comments(input_text):
 
 def t_MSTRING(t):
     r'"""[\s\S]*?"""'
+    t.lexer.lineno += t.value.count('\n')
     return t
 
 
 def t_STRING(t):
     r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\''
+    t.lexer.lineno += t.value.count('\n')
     return t
 
 
@@ -130,10 +132,12 @@ def t_ID(t):
 def t_newline(t):
     r'\n+'
     t.lexer.lineno += len(t.value)
+    t.lexer.column = 1
 
 
 def t_whitespace(t):
     r'[ \t]+'
+    t.lexer.column += len(t.value)
     pass
 
 
@@ -142,7 +146,7 @@ def t_error(t):
         '@': r'@[a-zA-Z_][a-zA-Z_0-9]*',
         '#': r'#[a-zA-Z_][a-zA-Z_0-9]*',
         '$': r'\$[a-zA-Z_][a-zA-Z_0-9]*',
-        '`': r'`.*?`',
+        '': r'.*?',
         '%': r'%',
         '~': r'~',
         '^': r'\^',
@@ -160,7 +164,7 @@ def t_error(t):
                 t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
-                return t
+                return None
         else:
             delimiter = t.value[0]
             match = re.match(rf'{delimiter}[^{delimiter}\\]*(?:\\.[^{delimiter}\\]*)*', t.value)
@@ -170,7 +174,7 @@ def t_error(t):
                 t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
-                return t
+                return None
 
     for first_char, pattern in error_patterns.items():
         if t.value.startswith(first_char):
@@ -181,26 +185,44 @@ def t_error(t):
                 t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
-                return t
+                return None
 
     print(f"Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
     t.type = 'ERROR'
     t.value = t.value[0]
     t.lexer.skip(1)
-    return t
+    return None
 
 
 lexer = lex.lex()
+
+lexer.column = 1
+
+
+def find_column(input_text, token):
+    last_cr = input_text.rfind('\n', 0, token.lexpos)
+    if last_cr < 0:
+        column = token.lexpos + 1
+    else:
+        column = token.lexpos - last_cr
+    return column
 
 
 def tokenize(input_text):
     processed_text = remove_comments(input_text)
     lexer.input(processed_text)
     lexer.lineno = 1
+    lexer.column = 1
     tokens_list = []
+
     while True:
         tok = lexer.token()
         if not tok:
             break
+
+        tok.column = find_column(processed_text, tok)
+
+        lexer.column += len(str(tok.value))
+
         tokens_list.append(tok)
     return tokens_list

@@ -1,4 +1,3 @@
-import sys
 from lexer import tokenize
 from tabulate import tabulate
 
@@ -11,9 +10,9 @@ def process_input(filename):
 def print_tokens(tokens_list):
     table_data = []
     for token in tokens_list:
-        table_data.append([token.lineno, token.lexpos, token.type, token.value])
+        table_data.append([token.lineno, token.column, token.type, token.value])
 
-    headers = ["Line", "Position", "Token", "Value"]
+    headers = ["Line", "Column", "Token", "Value"]
     print(tabulate(table_data, headers=headers, tablefmt="fancy_grid"))
 
 
