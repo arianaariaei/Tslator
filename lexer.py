@@ -29,7 +29,7 @@ tokens = (
     'LESS_THAN', 'GREATER_THAN', 'COLON_COLON', 'COLON', 'QUESTION',
     'COMMA', 'NOT', 'AND', 'OR', 'EQ', 'NEQ', 'LTE', 'GTE', 'ARROW',
     'FUNK', 'RETURN', 'IF', 'ELSE', 'WHILE', 'FOR', 'TO', 'BEGIN', 'END', 'DO',
-    'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS', 'ERROR'
+    'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS',
 )
 
 
@@ -85,7 +85,7 @@ def t_MSTRING(t):
 
 
 def t_STRING(t):
-    r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\''
+    r'"([^\n"\\]|\\.)*"|\'([^\n\'\\]|\\.)*\''
     t.lexer.lineno += t.value.count('\n')
     return t
 
@@ -161,7 +161,6 @@ def t_error(t):
             if match:
                 illegal_token = match.group(0)
                 print(f"Unclosed multi-line string '{illegal_token}' at line {t.lexer.lineno}")
-                t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
                 return None
@@ -171,7 +170,6 @@ def t_error(t):
             if match:
                 illegal_token = match.group(0)
                 print(f"Unclosed string '{illegal_token}' at line {t.lexer.lineno}")
-                t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
                 return None
@@ -182,13 +180,11 @@ def t_error(t):
             if match:
                 illegal_token = match.group(0)
                 print(f"Illegal token '{illegal_token}' at line {t.lexer.lineno}")
-                t.type = 'ERROR'
                 t.value = illegal_token
                 t.lexer.skip(len(illegal_token))
                 return None
 
     print(f"Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
-    t.type = 'ERROR'
     t.value = t.value[0]
     t.lexer.skip(1)
     return None
