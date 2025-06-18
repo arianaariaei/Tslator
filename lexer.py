@@ -19,7 +19,11 @@ reserved = {
     'null': 'NULL',
     'length': 'LEN',
     'as': 'AS',
-    'do': 'DO'
+    'do': 'DO',
+    'scan': 'SCAN',
+    'print': 'PRINT',
+    'list': 'LIST',
+    'exit': 'EXIT'
 }
 
 tokens = (
@@ -30,6 +34,7 @@ tokens = (
     'COMMA', 'NOT', 'AND', 'OR', 'EQ', 'NEQ', 'LTE', 'GTE', 'ARROW',
     'FUNK', 'RETURN', 'IF', 'ELSE', 'WHILE', 'FOR', 'TO', 'BEGIN', 'END', 'DO',
     'INT', 'VECTOR', 'STR', 'MSTR', 'BOOL', 'NULL', 'LEN', 'AS',
+    'SCAN', 'PRINT', 'LIST', 'EXIT',
 )
 
 
@@ -142,11 +147,18 @@ def t_whitespace(t):
 
 
 def t_error(t):
+    if not t.value:
+        print(f"Lexer error: empty token at line {t.lineno}")
+        t.lexer.skip(1)
+        return None
+
+    ch = t.value[0]
+
+    # Handle known illegal patterns
     error_patterns = {
         '@': r'@[a-zA-Z_][a-zA-Z_0-9]*',
         '#': r'#[a-zA-Z_][a-zA-Z_0-9]*',
         '$': r'\$[a-zA-Z_][a-zA-Z_0-9]*',
-        '': r'.*?',
         '%': r'%',
         '~': r'~',
         '^': r'\^',
@@ -155,39 +167,35 @@ def t_error(t):
         "''": r"''[^']",
     }
 
-    if t.value[0] in ["'", '"']:
-        if t.value[0] == '"' and len(t.value) >= 3 and t.value[:3] == '"""':
+    # Handle strings and triple-quoted strings
+    if ch in ['"', "'"]:
+        if t.value.startswith('"""'):
             match = re.match(r'"""[^"]*', t.value)
             if match:
-                illegal_token = match.group(0)
-                print(f"Unclosed multi-line string '{illegal_token}' at line {t.lexer.lineno}")
-                t.value = illegal_token
-                t.lexer.skip(len(illegal_token))
+                print(f"Unclosed multi-line string at line {t.lineno}")
+                t.lexer.skip(len(match.group(0)))
                 return None
         else:
-            delimiter = t.value[0]
-            match = re.match(rf'{delimiter}[^{delimiter}\\]*(?:\\.[^{delimiter}\\]*)*', t.value)
+            match = re.match(rf'{ch}[^{ch}\\]*(?:\\.[^{ch}\\]*)*', t.value)
             if match:
-                illegal_token = match.group(0)
-                print(f"Unclosed string '{illegal_token}' at line {t.lexer.lineno}")
-                t.value = illegal_token
-                t.lexer.skip(len(illegal_token))
+                print(f"Unclosed string at line {t.lineno}")
+                t.lexer.skip(len(match.group(0)))
                 return None
 
+    # Handle specific patterns
     for first_char, pattern in error_patterns.items():
         if t.value.startswith(first_char):
             match = re.match(pattern, t.value)
             if match:
-                illegal_token = match.group(0)
-                print(f"Illegal token '{illegal_token}' at line {t.lexer.lineno}")
-                t.value = illegal_token
-                t.lexer.skip(len(illegal_token))
+                print(f"Illegal token '{match.group(0)}' at line {t.lineno}")
+                t.lexer.skip(len(match.group(0)))
                 return None
 
-    print(f"Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
-    t.value = t.value[0]
+    # Default: single illegal character
+    print(f"Illegal character '{ch}' at line {t.lineno}")
     t.lexer.skip(1)
-    return None
+    return None  # <- ensure always returns None
+
 
 
 lexer = lex.lex()

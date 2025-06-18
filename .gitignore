@@ -40,3 +40,7 @@ Thumbs.db
 *.env
 
 input/
+
+output.ir
+parser.out
+parsetab.py
