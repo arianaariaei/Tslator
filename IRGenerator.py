@@ -1,288 +1,359 @@
 import AST
 import SymbolTable
-
-
-class RegisterAllocator:
-    def __init__(self):
-        self.counter = 0
-
-    def new_register(self):
-        reg = f"r{self.counter}"
-        self.counter += 1
-        return reg
-
-    def reset(self):
-        self.counter = 0
-
-
-class IRContext:
-    def __init__(self, symbol_table, function_name):
-        self.symbol_table = symbol_table
-        self.function_name = function_name
-        self.code = []
-        self.register_map = {}
-        self.reg_alloc = RegisterAllocator()
-        self.loop_stack = []
-
-    def emit(self, line):
-        self.code.append(line)
-
-    def new_register(self):
-        return self.reg_alloc.new_register()
+from ply.lex import LexToken
 
 
 class IRGenerator:
     def __init__(self):
-        self.output = []
-        self.function_contexts = []
+        self.code = []
+        self.current_register = 1
+        self.label_counter = 0
+        self.function_registers = {}
+        self.current_function = None
+        self.loop_stack = []
+        self.variable_registers = {}
 
-    def generate(self, ast, global_table):
-        self.visit(ast, global_table)
-        return "\n".join(self.output)
+    def get_next_register(self):
+        reg = self.current_register
+        self.current_register += 1
+        return f"r{reg}"
 
-    def visit(self, node, table):
-        if node is None:
-            return None
-        if isinstance(node, list):
-            for item in node:
-                self.visit(item, table)
-            return
-        method_name = 'visit_' + node.__class__.__name__
-        visitor = getattr(self, method_name, self.generic_visit)
-        return visitor(node, table)
+    def get_next_label(self, prefix="L"):
+        label = f"{prefix}{self.label_counter}"
+        self.label_counter += 1
+        return label
 
-    def generic_visit(self, node, table):
-        raise Exception(f"No visit_{node.__class__.__name__} method")
+    def emit(self, op, *args):
+        instruction = f"{op} {', '.join(str(arg) for arg in args)}" if args else op
+        self.code.append(instruction)
 
-    def visit_LexToken(self, node, ctx):
-        if node.type == 'ID':
-            reg = ctx.register_map.get(node.value)
-            if reg is None:
-                raise Exception(f"Undefined variable: {node.value}")
-            return reg
-        elif node.type == 'NUMBER':
-            reg = ctx.new_register()
-            ctx.emit(f"mov {reg}, {node.value}")
-            return reg
-        elif node.type in ('STRING', 'MSTRING'):
-            reg = ctx.new_register()
-            ctx.emit(f"mov {reg}, \"{node.value}\")")
-            return reg
-        elif node.type == 'BOOL':
-            reg = ctx.new_register()
-            val = 1 if node.value == 'true' else 0
-            ctx.emit(f"mov {reg}, {val}")
-            return reg
+    def emit_label(self, label):
+        self.code.append(f"{label}:")
+
+    def generate(self, ast, symbol_table):
+        self.symbol_table = symbol_table
+        if hasattr(ast, 'accept'):
+            ast.accept(self)
+        return '\n'.join(self.code).rstrip()
+
+    def visit_Program(self, node, symbol_table=None):
+        current = node
+        while current:
+            if hasattr(current, 'func') and current.func:
+                current.func.accept(self)
+            current = current.prog if hasattr(current, 'prog') else None
+
+    def visit_FunctionDef(self, node, symbol_table=None):
+        self.current_function = node.name
+        self.current_register = 1
+        self.variable_registers = {}
+
+        func_symbol = self.symbol_table.get(node.name)
+        if hasattr(func_symbol, 'scope'):
+            self.symbol_table = func_symbol.scope
         else:
-            raise Exception(f"Unsupported LexToken type: {node.type}")
+            raise Exception(f"No scope found for function '{node.name}'")
 
-    def visit_Program(self, node, table):
-        self.visit(node.func, table)
-        self.visit(node.prog, table)
+        self.emit_label(f"proc {node.name}")
 
-    def visit_FunctionDef(self, node, table):
-        func_symbol = table.get(node.name)
-        ctx = IRContext(SymbolTable.SymbolTable(table, func_symbol), node.name)
-        self.function_contexts.append(ctx)
-        ctx.emit(f"proc {node.name}")
-
+        param_registers = {}
+        max_param_reg_num = 0
         for i, param in enumerate(node.fmlparams.parameters):
-            reg = f"r{i}"
-            var = SymbolTable.VariableSymbol(param.type, param.id, True)
-            var.set_register(reg)
-            ctx.symbol_table.put(var)
-            ctx.register_map[param.id] = reg
+            reg_num = i + 1
+            reg = f"r{reg_num}"
+            param_registers[param.id] = reg
+            self.variable_registers[param.id] = reg
+            symbol = self.symbol_table.get(param.id)
+            if symbol:
+                symbol.set_register(reg)
+            max_param_reg_num = max(max_param_reg_num, reg_num)
 
-        ctx.reg_alloc.counter = len(node.fmlparams.parameters)
+        self.function_registers[node.name] = param_registers
+        self.current_register = max_param_reg_num + 1
 
-        self.visit(node.body, ctx)
+        if hasattr(node, 'body') and node.body:
+            node.body.accept(self)
 
-        if node.rettype == 'null':
-            ctx.emit("mov r0, 0")
-        if not ctx.code or not ctx.code[-1].startswith("ret"):
-            ctx.emit("ret")
+        if node.name != "main" and (not self.code or not self.code[-1].strip().endswith('ret')):
+            self.emit("mov", "r0", "0")
+            self.emit("ret")
 
-        self.output.extend(ctx.code)
-        self.function_contexts.pop()
+    def visit_Body(self, node, symbol_table=None):
+        if hasattr(node, 'statement') and node.statement:
+            node.statement.accept(self)
+        if hasattr(node, 'body') and node.body:
+            node.body.accept(self)
 
-    def visit_Body(self, node, ctx):
-        self.visit(node.statement, ctx)
-        self.visit(node.body, ctx)
+    def visit_VariableDecl(self, node, symbol_table=None):
+        varname = node.id
+        symbol = self.symbol_table.get(varname)
+        if not symbol:
+            return
+        if varname not in self.variable_registers:
+            var_reg = self.get_next_register()
+            self.variable_registers[varname] = var_reg
+            symbol.set_register(var_reg)
+        var_reg = self.variable_registers[varname]
 
-    def visit_VariableDecl(self, node, ctx):
-        reg = ctx.new_register()
-        var = SymbolTable.VariableSymbol(node.type, node.id, node.expr is not None)
-        var.set_register(reg)
-        ctx.symbol_table.put(var)
-        ctx.register_map[node.id] = reg
+        if hasattr(node, 'expr') and node.expr:
+            expr_reg = self.visit_expression(node.expr)
+            if expr_reg != var_reg:
+                self.emit("mov", var_reg, expr_reg)
 
-        if node.expr:
-            expr_reg = self.visit(node.expr, ctx)
-            ctx.emit(f"mov {reg}, {expr_reg}")
-
-    def visit_Assignment(self, node, ctx):
-        if isinstance(node.id, AST.OperationOnList):
-            vec_reg = self.visit(node.id.expr, ctx)
-            idx_reg = self.visit(node.id.index_expr, ctx)
-            val_reg = self.visit(node.expr, ctx)
-            ctx.emit(f"add r_tmp, {vec_reg}, {idx_reg}")
-            ctx.emit(f"st {val_reg}, r_tmp")
+    def visit_Assignment(self, node, symbol_table=None):
+        varname = node.id if isinstance(node.id, str) else node.id.value
+        symbol = self.symbol_table.get(varname)
+        if not symbol:
             return
 
-        var_name = node.id.value if hasattr(node.id, 'value') else node.id
-        reg = ctx.register_map.get(var_name)
-        expr_reg = self.visit(node.expr, ctx)
-        ctx.emit(f"mov {reg}, {expr_reg}")
+        if varname not in self.variable_registers:
+            var_reg = self.get_next_register()
+            self.variable_registers[varname] = var_reg
+            symbol.set_register(var_reg)
+        else:
+            var_reg = self.variable_registers[varname]
 
-    def visit_Integer(self, node, ctx):
-        reg = ctx.new_register()
-        ctx.emit(f"mov {reg}, {node.value}")
-        return reg
+        expr_reg = self.visit_expression(node.expr)
+        if expr_reg != var_reg:
+            self.emit("mov", var_reg, expr_reg)
 
-    def visit_BinExpr(self, node, ctx):
-        left_reg = self.visit(node.left, ctx)
-        right_reg = self.visit(node.right, ctx)
-        result_reg = ctx.new_register()
-        op_map = {'+': 'add', '-': 'sub', '*': 'mul', '/': 'div', '%': 'mod', '==': 'cmp==', '!=': 'cmp!=', '<': 'cmp<',
-                  '>': 'cmp>', '<=': 'cmp<=', '>=': 'cmp>='}
-        op = op_map.get(node.op)
-        ctx.emit(f"{op} {result_reg}, {left_reg}, {right_reg}")
+    def visit_expression(self, expr):
+        if isinstance(expr, LexToken):
+            return self.visit_token(expr)
+        elif isinstance(expr, AST.BinExpr):
+            return self.visit_BinExpr(expr)
+        elif isinstance(expr, AST.FunctionCall):
+            return self.visit_FunctionCall(expr)
+        elif isinstance(expr, AST.OperationOnList):
+            return self.visit_OperationOnList(expr)
+        elif isinstance(expr, AST.TernaryExpr):
+            return self.visit_TernaryExpr(expr)
+        elif isinstance(expr, AST.ExprList):
+            return self.visit_ExprList(expr)
+        else:
+            result_reg = self.get_next_register()
+            self.emit("mov", result_reg, "0")
+            return result_reg
+
+    def visit_token(self, token):
+        if token.type == 'NUMBER':
+            result_reg = self.get_next_register()
+            self.emit("mov", result_reg, token.value)
+            return result_reg
+        elif token.type == 'STRING':
+            result_reg = self.get_next_register()
+            self.emit("mov", result_reg, f'"{token.value}"')
+            return result_reg
+        elif token.type == 'BOOL':
+            result_reg = self.get_next_register()
+            value = "1" if token.value.lower() == 'true' else "0"
+            self.emit("mov", result_reg, value)
+            return result_reg
+        elif token.type == 'ID':
+            varname = token.value
+            if varname in self.variable_registers:
+                return self.variable_registers[varname]
+            elif (self.current_function and
+                  self.current_function in self.function_registers and
+                  varname in self.function_registers[self.current_function]):
+                return self.function_registers[self.current_function][varname]
+            else:
+                result_reg = self.get_next_register()
+                self.emit("mov", result_reg, "0")
+                return result_reg
+        result_reg = self.get_next_register()
+        self.emit("mov", result_reg, "0")
         return result_reg
 
-    def visit_FunctionCall(self, node, ctx):
-        args = [self.visit(arg, ctx) for arg in node.args.exprs] if node.args else []
+    def visit_BinExpr(self, node):
+        left_reg = self.visit_expression(node.left)
+        right_reg = self.visit_expression(node.right)
+        result_reg = self.get_next_register()
+        if node.op == '+':
+            self.emit("add", result_reg, left_reg, right_reg)
+        elif node.op == '-':
+            self.emit("sub", result_reg, left_reg, right_reg)
+        elif node.op == '*':
+            self.emit("mul", result_reg, left_reg, right_reg)
+        elif node.op == '/':
+            self.emit("div", result_reg, left_reg, right_reg)
+        elif node.op == '%':
+            self.emit("mod", result_reg, left_reg, right_reg)
+        elif node.op == '<':
+            self.emit("cmp<", result_reg, left_reg, right_reg)
+        elif node.op == '>':
+            self.emit("cmp>", result_reg, left_reg, right_reg)
+        elif node.op == '<=':
+            self.emit("cmp<=", result_reg, left_reg, right_reg)
+        elif node.op == '>=':
+            self.emit("cmp>=", result_reg, left_reg, right_reg)
+        elif node.op == '==' or node.op == '=':
+            self.emit("cmp=", result_reg, left_reg, right_reg)
+        elif node.op == '!=':
+            temp_reg = self.get_next_register()
+            self.emit("cmp=", temp_reg, left_reg, right_reg)
+            self.emit("sub", result_reg, "1", temp_reg)
+        elif node.op == '&&':
+            self.emit("mul", result_reg, left_reg, right_reg)
+        elif node.op == '||':
+            temp_reg = self.get_next_register()
+            self.emit("add", temp_reg, left_reg, right_reg)
+            self.emit("cmp>", result_reg, temp_reg, "0")
+        return result_reg
 
+    def visit_FunctionCall(self, node, symbol_table=None):
         if node.id == 'scan':
-            reg = ctx.new_register()
-            ctx.emit(f"call iget, {reg}")
-            return reg
+            result_reg = self.get_next_register()
+            self.emit("call", "iget", result_reg)
+            return result_reg
         elif node.id == 'print':
-            for arg in args:
-                ctx.emit(f"call iput, {arg}")
+            if node.args and hasattr(node.args, 'exprs') and node.args.exprs:
+                arg_reg = self.visit_expression(node.args.exprs[0])
+                self.emit("call", "iput", arg_reg)
             return None
-        elif node.id == 'exit':
-            ctx.emit(f"call halt, {args[0]}")
-            return None
-        elif node.id == 'length':
-            ctx.emit(f"call len, {args[0]}")
-            return args[0]
-        elif node.id == 'list':
-            reg = ctx.new_register()
-            ctx.emit(f"call mem, {args[0]}")
-            ctx.emit(f"mov {reg}, r0")
-            return reg
+        else:
+            result_reg = self.get_next_register()
+            args = []
+            if node.args and hasattr(node.args, 'exprs'):
+                for arg_expr in node.args.exprs:
+                    arg_reg = self.visit_expression(arg_expr)
+                    args.append(arg_reg)
+            self.emit("call", node.id, result_reg, *args)
+            return result_reg
 
-        for i, arg in enumerate(args):
-            target_reg = f"r{i}"
-            if arg != target_reg:
-                ctx.emit(f"mov {target_reg}, {arg}")
+    def visit_OperationOnList(self, node):
+        base_reg = self.visit_expression(node.expr)
+        index_reg = self.visit_expression(node.index_expr)
+        result_reg = self.get_next_register()
+        addr_reg = self.get_next_register()
+        temp_reg = self.get_next_register()
+        self.emit("mul", temp_reg, index_reg, "8")
+        self.emit("add", addr_reg, base_reg, temp_reg)
+        self.emit("ld", result_reg, addr_reg)
+        return result_reg
 
-        ctx.emit(f"call {node.id}")
-        return "r0"
+    def visit_TernaryExpr(self, node):
+        cond_reg = self.visit_expression(node.cond)
+        result_reg = self.get_next_register()
+        false_label = self.get_next_label("FALSE")
+        end_label = self.get_next_label("END")
+        self.emit("jz", cond_reg, false_label)
+        true_reg = self.visit_expression(node.first_expr)
+        self.emit("mov", result_reg, true_reg)
+        self.emit("jmp", end_label)
+        self.emit_label(false_label)
+        false_reg = self.visit_expression(node.second_expr)
+        self.emit("mov", result_reg, false_reg)
+        self.emit_label(end_label)
+        return result_reg
 
-    def visit_ReturnInstruction(self, node, ctx):
-        reg = self.visit(node.expr, ctx)
-        ctx.emit(f"mov r0, {reg}")
-        ctx.emit("ret")
+    def visit_ExprList(self, node):
+        result_reg = self.get_next_register()
+        size = len(node.exprs)
+        bytes_needed = size * 8
+        self.emit("mov", result_reg, bytes_needed)
+        self.emit("call", "mem", result_reg)
+        for i, expr in enumerate(node.exprs):
+            expr_reg = self.visit_expression(expr)
+            offset_reg = self.get_next_register()
+            addr_reg = self.get_next_register()
+            self.emit("mov", offset_reg, str(i * 8))
+            self.emit("add", addr_reg, result_reg, offset_reg)
+            self.emit("st", expr_reg, addr_reg)
+        return result_reg
 
-    def visit_IfOrIfElseInstruction(self, node, ctx):
-        cond_reg = self.visit(node.cond, ctx)
-        label_else = f"L{ctx.new_register()}"
-        label_end = f"L{ctx.new_register()}"
+    def visit_ReturnInstruction(self, node, symbol_table=None):
+        if node.expr and isinstance(node.expr, AST.BinExpr):
+            left_reg = self.visit_expression(node.expr.left)
+            right_reg = self.visit_expression(node.expr.right)
+            op = node.expr.op
+            if op == '+':
+                self.emit("add", "r0", left_reg, right_reg)
+            elif op == '-':
+                self.emit("sub", "r0", left_reg, right_reg)
+            elif op == '*':
+                self.emit("mul", "r0", left_reg, right_reg)
+            elif op == '/':
+                self.emit("div", "r0", left_reg, right_reg)
+            elif op == '%':
+                self.emit("mod", "r0", left_reg, right_reg)
+            else:
+                expr_reg = self.visit_expression(node.expr)
+                if expr_reg != "r0":
+                    self.emit("mov", "r0", expr_reg)
+        elif node.expr:
+            expr_reg = self.visit_expression(node.expr)
+            if expr_reg != "r0":
+                self.emit("mov", "r0", expr_reg)
+        else:
+            self.emit("mov", "r0", "0")
+        self.emit("ret")
 
-        ctx.emit(f"jz {cond_reg}, {label_else}")
-        self.visit(node.if_statement, ctx)
-        ctx.emit(f"jmp {label_end}")
-        ctx.emit(f"{label_else}:")
+    def visit_IfOrIfElseInstruction(self, node):
+        cond_reg = self.visit_expression(node.cond)
         if node.else_statement:
-            self.visit(node.else_statement, ctx)
-        ctx.emit(f"{label_end}:")
+            else_label = self.get_next_label("ELSE")
+            end_label = self.get_next_label("ENDIF")
+            self.emit("jz", cond_reg, else_label)
+            node.if_statement.accept(self)
+            self.emit("jmp", end_label)
+            self.emit_label(else_label)
+            node.else_statement.accept(self)
+            self.emit_label(end_label)
+        else:
+            end_label = self.get_next_label("ENDIF")
+            self.emit("jz", cond_reg, end_label)
+            node.if_statement.accept(self)
+            self.emit_label(end_label)
 
-    def visit_WhileInstruction(self, node, ctx):
-        label_start = f"L{ctx.new_register()}"
-        label_end = f"L{ctx.new_register()}"
-        ctx.loop_stack.append((label_start, label_end))
+    def visit_WhileInstruction(self, node):
+        loop_label = self.get_next_label("WHILE")
+        end_label = self.get_next_label("ENDWHILE")
+        self.loop_stack.append((loop_label, end_label))
+        self.emit_label(loop_label)
+        cond_reg = self.visit_expression(node.cond)
+        self.emit("jz", cond_reg, end_label)
+        node.while_statement.accept(self)
+        self.emit("jmp", loop_label)
+        self.emit_label(end_label)
+        self.loop_stack.pop()
 
-        ctx.emit(f"{label_start}:")
-        cond_reg = self.visit(node.cond, ctx)
-        ctx.emit(f"jz {cond_reg}, {label_end}")
-        self.visit(node.while_statement, ctx)
-        ctx.emit(f"jmp {label_start}")
-        ctx.emit(f"{label_end}:")
+    def visit_ForInstruction(self, node, symbol_table=None):
+        loop_var_reg = self.get_next_register()
+        start_reg = self.visit_expression(node.start_expr)
+        end_reg = self.visit_expression(node.end_expr)
+        symbol = self.symbol_table.get(node.id)
+        if symbol:
+            symbol.set_register(loop_var_reg)
+        self.emit("mov", loop_var_reg, start_reg)
+        loop_label = self.get_next_label("FOR")
+        end_label = self.get_next_label("ENDFOR")
+        self.loop_stack.append((loop_label, end_label))
+        self.emit_label(loop_label)
+        cond_reg = self.get_next_register()
+        self.emit("cmp>", cond_reg, loop_var_reg, end_reg)
+        self.emit("jnz", cond_reg, end_label)
+        if hasattr(node.for_statement, 'accept'):
+            node.for_statement.accept(self)
+        elif isinstance(node.for_statement, list):
+            for stmt in node.for_statement:
+                if hasattr(stmt, 'accept'):
+                    stmt.accept(self)
+        self.emit("add", loop_var_reg, loop_var_reg, "1")
+        self.emit("jmp", loop_label)
+        self.emit_label(end_label)
+        self.loop_stack.pop()
 
-        ctx.loop_stack.pop()
+    def visit_Block(self, node, symbol_table=None):
+        if hasattr(node, 'body') and node.body:
+            node.body.accept(self)
 
-    def visit_ForInstruction(self, node, ctx):
-        var = SymbolTable.VariableSymbol('int', node.id, True)
-        reg = ctx.new_register()
-        var.set_register(reg)
-        ctx.symbol_table.put(var)
-        ctx.register_map[node.id] = reg
+    def visit_ContinueInstruction(self, node):
+        if self.loop_stack:
+            loop_label, _ = self.loop_stack[-1]
+            self.emit("jmp", loop_label)
 
-        start = self.visit(node.start_expr, ctx)
-        end = self.visit(node.end_expr, ctx)
-
-        ctx.emit(f"mov {reg}, {start}")
-        label_start = f"L{ctx.new_register()}"
-        label_end = f"L{ctx.new_register()}"
-        ctx.loop_stack.append((label_start, label_end))
-
-        ctx.emit(f"{label_start}:")
-        cmp_reg = ctx.new_register()
-        ctx.emit(f"cmp<= {cmp_reg}, {reg}, {end}")
-        ctx.emit(f"jz {cmp_reg}, {label_end}")
-        self.visit(node.for_statement, ctx)
-        ctx.emit(f"add {reg}, {reg}, 1")
-        ctx.emit(f"jmp {label_start}")
-        ctx.emit(f"{label_end}:")
-
-        ctx.loop_stack.pop()
-
-    def visit_ContinueInstruction(self, node, ctx):
-        if ctx.loop_stack:
-            loop_start, _ = ctx.loop_stack[-1]
-            ctx.emit(f"jmp {loop_start}")
-
-    def visit_DoWhileInstruction(self, node, ctx):
-        label_start = f"L{ctx.new_register()}"
-        label_end = f"L{ctx.new_register()}"
-        ctx.loop_stack.append((label_start, label_end))
-
-        ctx.emit(f"{label_start}:")
-        self.visit(node.do_statement, ctx)
-        cond_reg = self.visit(node.cond, ctx)
-        ctx.emit(f"jnz {cond_reg}, {label_start}")
-
-        ctx.loop_stack.pop()
-
-    def visit_Block(self, node, ctx):
-        self.visit(node.body, ctx)
-
-    def visit_ExprList(self, node, ctx):
-        regs = [self.visit(expr, ctx) for expr in node.exprs]
-        return regs[0] if regs else None
-
-    def visit_TernaryExpr(self, node, ctx):
-        cond_reg = self.visit(node.cond, ctx)
-        label_else = f"L{ctx.new_register()}"
-        label_end = f"L{ctx.new_register()}"
-        result_reg = ctx.new_register()
-
-        ctx.emit(f"jz {cond_reg}, {label_else}")
-        true_reg = self.visit(node.first_expr, ctx)
-        ctx.emit(f"mov {result_reg}, {true_reg}")
-        ctx.emit(f"jmp {label_end}")
-        ctx.emit(f"{label_else}:")
-        false_reg = self.visit(node.second_expr, ctx)
-        ctx.emit(f"mov {result_reg}, {false_reg}")
-        ctx.emit(f"{label_end}:")
-        return result_reg
-
-    def visit_OperationOnList(self, node, ctx):
-        vec_reg = self.visit(node.expr, ctx)
-        idx_reg = self.visit(node.index_expr, ctx)
-        addr_reg = ctx.new_register()
-        result_reg = ctx.new_register()
-        ctx.emit(f"add {addr_reg}, {vec_reg}, {idx_reg}")
-        ctx.emit(f"ld {result_reg}, {addr_reg}")
-        return result_reg
+    def visit_BreakInstruction(self, node):
+        if self.loop_stack:
+            _, end_label = self.loop_stack[-1]
+            self.emit("jmp", end_label)

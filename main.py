@@ -4,63 +4,49 @@ from lexer import tokenize
 import parser
 from SemanticAnalyzer import semanticChecker
 from IRGenerator import IRGenerator
+from fpdf import FPDF
+import io
+import contextlib
+from fpdf.enums import XPos, YPos
 
 
-def process_input(filename):
-    try:
-        with open(filename, 'r') as file:
-            return file.read()
-    except FileNotFoundError:
-        print(f"Error: File '{filename}' not found.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error reading file '{filename}': {e}")
-        sys.exit(1)
+class PDFReport(FPDF):
+    def __init__(self):
+        super().__init__()
+        self.add_font("DejaVu", "", "fonts/DejaVuSansMono.ttf")
+        self.set_font("DejaVu", "", 10)
 
+    def header(self):
+        self.set_font("DejaVu", "", 14)
+        self.cell(0, 10, "TESLANG Compilation Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+        self.ln(5)
 
-def print_tokens(tokens_list):
-    if not tokens_list:
-        return
-    table_data = [[token.lineno, token.column, token.type, token.value] for token in tokens_list]
-    headers = ["Line", "Column", "Token", "Value"]
-    print("=" * 60)
-    print("LEXICAL ANALYSIS - TOKENS")
-    print("=" * 60)
-    print(tabulate(table_data, headers=headers, tablefmt="fancy_grid"))
-    print()
+    def section_title(self, title):
+        self.set_font("DejaVu", "", 12)
+        self.set_text_color(30, 30, 120)
+        self.cell(0, 10, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        self.set_text_color(0, 0, 0)
 
+    def add_code_block(self, code):
+        self.set_font("DejaVu", "", 10)
+        self.multi_cell(0, 6, code)
+        self.ln(2)
 
-def print_ast(ast, indent=0):
-    if ast is None:
-        return
-    spaces = "  " * indent
-    class_name = ast.__class__.__name__
-    print(f"{spaces}{class_name}", end="")
-    if hasattr(ast, 'name'):
-        print(f" (name: {ast.name})", end="")
-    if hasattr(ast, 'value'):
-        print(f" (value: {ast.value})", end="")
-    if hasattr(ast, 'op'):
-        print(f" (op: {ast.op})", end="")
-    if hasattr(ast, 'type_name'):
-        print(f" (type: {ast.type_name})", end="")
-    if hasattr(ast, 'return_type'):
-        print(f" (return_type: {ast.return_type})", end="")
-    if hasattr(ast, 'line'):
-        print(f" [line: {ast.line}]", end="")
-    print()
-    for attr in vars(ast).values():
-        if isinstance(attr, list):
-            for item in attr:
-                if hasattr(item, '__dict__'):
-                    print_ast(item, indent + 1)
-        elif hasattr(attr, '__dict__'):
-            print_ast(attr, indent + 1)
+    def add_table(self, headers, rows):
+        self.set_font("DejaVu", "", 9)
+        col_widths = [25] * len(headers)
+        for i, header in enumerate(headers):
+            self.set_fill_color(220, 220, 220)
+            self.cell(col_widths[i], 8, header, border=1, align="C", fill=True)
+        self.ln()
+        for row in rows:
+            for i, item in enumerate(row):
+                self.cell(col_widths[i], 6, str(item), border=1)
+            self.ln()
+        self.ln(3)
 
 
 def capture_parsing_output(input_text):
-    import io
-    import contextlib
     syntax_errors = []
     semantic_errors = []
     ast = None
@@ -70,151 +56,155 @@ def capture_parsing_output(input_text):
             ast = parser.parser.parse(input_text, tracking=True)
     except Exception as e:
         syntax_errors.append(f"Parser exception: {str(e)}")
-    captured_lines = output_buffer.getvalue().split('\n')
-    for line in captured_lines:
+    captured = output_buffer.getvalue().split('\n')
+    for line in captured:
         line = line.strip()
         if not line:
             continue
         if 'Syntax error' in line:
             syntax_errors.append(line)
-        elif 'Semantic error' in line or 'Type mismatch' in line or 'Type error' in line:
+        elif 'Semantic error' in line or 'Type mismatch' in line:
             semantic_errors.append(line)
-        elif 'error' in line.lower() and ('line' in line or 'token' in line):
-            if 'semantic' in line.lower() or 'type' in line.lower():
-                semantic_errors.append(line)
-            else:
-                syntax_errors.append(line)
-    success = ast is not None and len(syntax_errors) == 0 and len(semantic_errors) == 0
+    success = ast is not None
     return ast, syntax_errors, semantic_errors, success
 
 
-def perform_token_level_semantic_analysis(tokens_list):
-    defined_vars = set()
-    defined_functions = set(['print', 'scan', 'exit', 'length', 'vector', 'list'])
-    semantic_errors = []
+def generate_ir_code(ast, symbol_table):
+    """Generate IR code from AST and symbol table"""
+    ir_instructions = []
+    ir_errors = []
+
     try:
-        i = 0
-        while i < len(tokens_list):
-            token = tokens_list[i]
-            if token.type in ['INT', 'STR', 'BOOL', 'VECTOR'] and i + 1 < len(tokens_list):
-                if tokens_list[i + 1].type == 'ID':
-                    defined_vars.add(tokens_list[i + 1].value)
-                    i += 2
-                    continue
-            if token.type == 'FUNK' and i + 1 < len(tokens_list):
-                if tokens_list[i + 1].type == 'ID':
-                    defined_functions.add(tokens_list[i + 1].value)
-                    i += 2
-                    continue
-            if token.type == 'ID':
-                var_name = token.value
-                if i + 1 < len(tokens_list) and tokens_list[i + 1].value == '(':
-                    if var_name not in defined_functions:
-                        semantic_errors.append(
-                            f"Semantic error at line {token.lineno}: Function '{var_name}' not defined")
-                else:
-                    if var_name not in defined_vars and var_name not in defined_functions:
-                        semantic_errors.append(
-                            f"Semantic error at line {token.lineno}: Variable '{var_name}' not defined")
-            i += 1
-        return semantic_errors
+        if ast:
+            ir_generator = IRGenerator()
+            # Pass symbol_table to generator first, then generate from AST
+            ir_generator.symbol_table = symbol_table
+            ir_instructions = ir_generator.generate(ast, symbol_table)
+        else:
+            ir_errors.append("Cannot generate IR: AST is None")
     except Exception as e:
-        return [f"Error in token-level semantic analysis: {e}"]
+        ir_errors.append(f"IR Generation exception: {str(e)}")
+
+    return ir_instructions, ir_errors
 
 
 def main():
     filename = sys.argv[1] if len(sys.argv) > 1 else "input/sample_code.tes"
-    print(f"Compiling: {filename}")
-    print("=" * 80)
-    lexical_success = False
-    syntax_success = False
-    semantic_success = False
-    ast = None
-    tokens_list = []
+
     try:
-        input_text = process_input(filename)
-        lexical_success = True
-        print(f"✓ Successfully read input file ({len(input_text)} characters)")
-    except Exception as e:
-        print(f"✗ Failed to read input file: {e}")
+        with open(filename, 'r') as f:
+            source_code = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{filename}' not found")
         return
-    if lexical_success:
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return
+
+    pdf = PDFReport()
+    pdf.add_page()
+    pdf.section_title("Source Code")
+    pdf.add_code_block(source_code)
+
+    # Lexical Analysis
+    tokens = []
+    try:
+        tokens = tokenize(source_code)
+    except Exception as e:
+        pdf.section_title("Lexical Analysis - Failed")
+        pdf.add_code_block(str(e))
+        pdf.output("report.pdf")
+        return
+
+    # Add token table
+    pdf.section_title("Lexical Analysis - Tokens")
+    token_data = [[t.lineno, t.column, t.type, t.value] for t in tokens]
+    pdf.add_table(["Line", "Column", "Token", "Value"], token_data)
+
+    # Parsing
+    pdf.section_title("Syntax and Semantic Analysis")
+    ast, syntax_errors, semantic_errors, parse_ok = capture_parsing_output(source_code)
+
+    if syntax_errors:
+        pdf.section_title("Syntax Errors")
+        for err in syntax_errors:
+            pdf.add_code_block(err)
+
+    # Semantic Analysis
+    symbol_table = None
+    if ast:
         try:
-            tokens_list = tokenize(input_text)
-            print_tokens(tokens_list)
-        except Exception as e:
-            print(f"✗ Lexical analysis failed: {e}")
-            lexical_success = False
-    print("=" * 60)
-    print("SYNTAX & SEMANTIC ANALYSIS")
-    print("=" * 60)
-    syntax_errors = []
-    semantic_errors = []
-    if lexical_success:
-        ast, syntax_errors, semantic_errors, parsing_success = capture_parsing_output(input_text)
-        if syntax_errors:
-            print("SYNTAX ERRORS:")
-            print("-" * 40)
-            for error in syntax_errors:
-                print(f"  {error}")
-            print()
-        if semantic_errors:
-            print("SEMANTIC ERRORS:")
-            print("-" * 40)
-            for error in semantic_errors:
-                print(f"  {error}")
-            print()
-        syntax_success = len(syntax_errors) == 0
-        semantic_success = len(semantic_errors) == 0 and ast is not None
-        if ast:
             checker = semanticChecker()
-            checker.analyze(ast)
-            semantic_errors = checker.errors
-        syntax_success = len(syntax_errors) == 0
-        semantic_success = len(semantic_errors) == 0 and ast is not None
-        if syntax_success and semantic_success:
-            print("✓ Syntax and semantic analysis completed successfully")
-            irgen = IRGenerator()
-            symbol_table = checker.visit_Program(ast, None)
-            ir_code = irgen.generate(ast, symbol_table)
-            with open("output.ir", "w") as f:
-                f.write(ir_code)
-            print("✓ IR code generated and written to 'output.ir'")
-        else:
-            if not syntax_success:
-                print("✗ Syntax analysis completed with errors")
-            if not semantic_success:
-                print("✗ Semantic analysis completed with errors")
+            symbol_table = checker.analyze(ast)
+            if checker.errors:
+                semantic_errors.extend(checker.errors)
+        except Exception as e:
+            semantic_errors.append(f"Semantic analysis exception: {e}")
+
+    if semantic_errors:
+        pdf.section_title("Semantic Errors")
+        for err in semantic_errors:
+            pdf.add_code_block(err)
+
+    # IR Generation - Generate even if there were semantic errors
+    pdf.section_title("Intermediate Representation (IR) Generation")
+    ir_instructions = []
+    ir_errors = []
+
+    if ast:
+        try:
+            ir_instructions, ir_errors = generate_ir_code(ast, symbol_table)
+
+            if ir_instructions:
+                pdf.section_title("Generated IR Code (Machine Code)")
+
+                # Handle if ir_instructions is a string (split by lines)
+                if isinstance(ir_instructions, str):
+                    instruction_lines = ir_instructions.strip().split('\n')
+                    instruction_lines = [line.strip() for line in instruction_lines if line.strip()]
+                else:
+                    instruction_lines = ir_instructions
+
+                ir_code_text = ""
+                for instruction in instruction_lines:
+                    ir_code_text += instruction + "\n"
+                pdf.add_code_block(ir_code_text)
+            else:
+                pdf.section_title("IR Generation - No Instructions Generated")
+                pdf.add_code_block("No IR instructions were generated")
+
+        except Exception as e:
+            ir_errors.append(f"IR Generation failed: {str(e)}")
     else:
-        print("Skipping syntax and semantic analysis due to lexical errors")
-    if ast is None and lexical_success and len(semantic_errors) == 0:
-        print("\n" + "-" * 40)
-        print("ADDITIONAL SEMANTIC CHECKS:")
-        print("-" * 40)
-        token_semantic_errors = perform_token_level_semantic_analysis(tokens_list)
-        if token_semantic_errors:
-            for error in token_semantic_errors:
-                print(f"  {error}")
-            semantic_errors.extend(token_semantic_errors)
-        else:
-            print("  No additional semantic errors found at token level")
-    print("\n" + "=" * 80)
-    print("COMPILATION SUMMARY")
-    print("=" * 80)
-    total_syntax_errors = len(syntax_errors)
-    total_semantic_errors = len(semantic_errors)
-    if lexical_success and syntax_success and semantic_success:
-        print("✓ Compilation completed successfully!")
-    else:
-        print("✗ Compilation completed with errors!")
-        print(f"  - Lexical Analysis: {'PASSED' if lexical_success else 'FAILED'}")
-        print(f"  - Syntax Analysis: {'PASSED' if syntax_success else 'FAILED'}")
-        if total_syntax_errors > 0:
-            print(f"    ({total_syntax_errors} syntax error{'s' if total_syntax_errors != 1 else ''})")
-        print(f"  - Semantic Analysis: {'PASSED' if semantic_success else 'FAILED'}")
-        if total_semantic_errors > 0:
-            print(f"    ({total_semantic_errors} semantic error{'s' if total_semantic_errors != 1 else ''})")
-    print("=" * 80)
+        ir_errors.append("Cannot generate IR: AST parsing failed")
+
+    # Display IR errors if any
+    if ir_errors:
+        pdf.section_title("IR Generation Errors")
+        for err in ir_errors:
+            pdf.add_code_block(err)
+            print(f"IR Error: {err}")
+
+    # Summary
+    pdf.section_title("Compilation Summary")
+    summary = [
+        f"File: {filename}",
+        f"Lexical Analysis: {'PASSED' if tokens else 'FAILED'}",
+        f"Syntax Analysis: {'PASSED' if not syntax_errors else 'FAILED'}",
+        f"Semantic Analysis: {'PASSED' if not semantic_errors else 'FAILED'}",
+        f"IR Generation: {'PASSED' if ir_instructions and not ir_errors else 'FAILED'}",
+    ]
+
+    for line in summary:
+        pdf.add_code_block(line)
+        print(line)
+
+    # Save PDF report
+    try:
+        pdf.output("report.pdf")
+        print("✓ Compilation report saved to report.pdf")
+    except Exception as e:
+        print(f"Error saving PDF: {e}")
 
 
 if __name__ == "__main__":

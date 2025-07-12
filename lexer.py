@@ -197,7 +197,6 @@ def t_error(t):
     return None  # <- ensure always returns None
 
 
-
 lexer = lex.lex()
 
 lexer.column = 1

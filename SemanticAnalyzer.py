@@ -153,6 +153,7 @@ class semanticChecker:
     def visit_FunctionDef(self, node, parent_table):
         func_symbol = parent_table.get(node.name)
         table = SymbolTable.SymbolTable(parent_table, func_symbol)
+        func_symbol.scope = table
         table.function = func_symbol
         for param in node.fmlparams.parameters:
             if not self.is_valid_type(param.type):
@@ -338,10 +339,12 @@ class semanticChecker:
 
     def analyze(self, ast):
         if hasattr(ast, 'accept'):
-            self.visit_Program(ast, None)
+            symbol_table = self.visit_Program(ast, None)
+            return symbol_table
 
         if not self.errors:
             print("Semantic analysis completed successfully.")
         else:
             for error in self.errors:
                 print(error)
+        return None

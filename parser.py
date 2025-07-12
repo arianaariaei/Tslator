@@ -271,9 +271,10 @@ def p_error(p):
             break
 
     parser.errok()
+    return tok
 
 
-parser = yacc.yacc(start='prog')
+parser = yacc.yacc(start='prog', debug=True)
 
 # Read input
 with open("input/sample_code.tes", "r") as file:

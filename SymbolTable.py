@@ -27,6 +27,9 @@ class VectorSymbol(Symbol):
         self.length = length
         self.type = 'vector'
 
+    def set_register(self, register):  # Add this method
+        self.register = register
+
 
 class FunctionSymbol(Symbol):
     redefined = False
