@@ -62,6 +62,6 @@ This compiler was developed in three main phases:
 
 ## 📄 License
 
-*MIT License*
+This project is licensed under the [MIT License](LICENSE).
 
 ---
