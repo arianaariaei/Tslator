@@ -21,14 +21,15 @@ TesLang supports the following data types:
 
 ## Project Structure
 
-| File/Folder         | Description                                      |
-|---------------------|--------------------------------------------------|
-| `lexer.py`          | Lexical analyzer built with PLY                  |
-| `parser.py`         | Parser using TesLang grammar rules               |
-| `AST.py`            | Abstract Syntax Tree node classes                |
-| `SymbolTable.py`    | Symbol management, scoping, and type checking    |
-| `IRGenerator.py`    | Intermediate Representation (IR) code generation |
-| `main.py`           | Entry point of the compiler                      |
+| File/Folder           | Description                                      |
+|-----------------------|--------------------------------------------------|
+| `lexer.py`            | Lexical analyzer built with PLY                  |
+| `parser.py`           | Parser using TesLang grammar rules               |
+| `AST.py`              | Abstract Syntax Tree node classes                |
+| `SymbolTable.py`      | Symbol management, scoping, and type checking    |
+| `SemanticAnalyzer.py` |Performs semantic analysis and type validation    |
+| `IRGenerator.py`      | Intermediate Representation (IR) code generation |
+| `main.py`             | Entry point of the compiler                      |
 
 ---
 
