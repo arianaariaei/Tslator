@@ -1,9 +1,9 @@
 # Teslator: A Compiler for TesLang
 
-**Teslator** is a compiler for the **TesLang** programming language, developed as part of the *Compiler Design* course at Babol Noshirvani University of Technology. TesLang is a simple C-like educational language featuring basic types, user-defined functions, arrays, conditionals, loops, and string handling.
+**Teslator** is a compiler for the **TSLANG** programming language, developed as part of the *Compiler Design* course at Babol Noshirvani University of Technology. TesLang is a simple C-like educational language featuring basic types, user-defined functions, arrays, conditionals, loops, and string handling.
 
 
-**Instructor and Developer of TesLang:** Dr. Gholami Rudi
+**Instructor and Developer of TSLANG:** Dr. Gholami Rudi
 
 ---
 
