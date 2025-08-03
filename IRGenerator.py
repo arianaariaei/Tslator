@@ -28,7 +28,7 @@ class IRGenerator:
         self.code.append(instruction)
 
     def emit_label(self, label):
-        self.code.append(f"{label}:")
+        self.code.append(f"{label}")
 
     def generate(self, ast, symbol_table):
         self.symbol_table = symbol_table
