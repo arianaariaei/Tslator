@@ -1,6 +1,6 @@
 import ply.yacc as yacc
 import AST
-from lexer import tokens
+from lexer import tokens, lexer as the_lexer, remove_comments
 from SemanticAnalyzer import semanticChecker
 
 precedence = (

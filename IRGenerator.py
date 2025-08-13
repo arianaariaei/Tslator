@@ -12,6 +12,11 @@ class IRGenerator:
         self.current_function = None
         self.loop_stack = []
         self.variable_registers = {}
+        # NEW: constants cache + word size
+        self.const_regs = {}
+        self.word_bytes_str = "8"
+
+    # --- utils ---------------------------------------------------------------
 
     def get_next_register(self):
         reg = self.current_register
@@ -28,13 +33,30 @@ class IRGenerator:
         self.code.append(instruction)
 
     def emit_label(self, label):
-        self.code.append(f"{label}")
+        # procs: no colon; control-flow labels: colon
+        if label.startswith("proc "):
+            self.code.append(label)
+        else:
+            self.code.append(f"{label}:")
+
+    def get_const_reg(self, value: str):
+        """Return a register holding the numeric constant `value` (string)."""
+        if value not in self.const_regs:
+            r = self.get_next_register()
+            self.emit("mov", r, value)
+            self.const_regs[value] = r
+        return self.const_regs[value]
+
+    # --- driver --------------------------------------------------------------
 
     def generate(self, ast, symbol_table):
         self.symbol_table = symbol_table
         if hasattr(ast, 'accept'):
             ast.accept(self)
-        return '\n'.join(self.code).rstrip()
+        # IMPORTANT: keep a newline at EOF so the last instruction is parsed
+        return '\n'.join(self.code) + '\n'
+
+    # --- visitors ------------------------------------------------------------
 
     def visit_Program(self, node, symbol_table=None):
         current = node
@@ -47,6 +69,7 @@ class IRGenerator:
         self.current_function = node.name
         self.current_register = 1
         self.variable_registers = {}
+        self.const_regs = {}  # reset per function
 
         func_symbol = self.symbol_table.get(node.name)
         if hasattr(func_symbol, 'scope'):
@@ -141,6 +164,7 @@ class IRGenerator:
             self.emit("mov", result_reg, token.value)
             return result_reg
         elif token.type == 'STRING':
+            # TSVM is integer-only; strings would need separate handling.
             result_reg = self.get_next_register()
             self.emit("mov", result_reg, f'"{token.value}"')
             return result_reg
@@ -192,13 +216,15 @@ class IRGenerator:
         elif node.op == '!=':
             temp_reg = self.get_next_register()
             self.emit("cmp=", temp_reg, left_reg, right_reg)
-            self.emit("sub", result_reg, "1", temp_reg)
+            one = self.get_const_reg("1")
+            self.emit("sub", result_reg, one, temp_reg)
         elif node.op == '&&':
             self.emit("mul", result_reg, left_reg, right_reg)
         elif node.op == '||':
             temp_reg = self.get_next_register()
             self.emit("add", temp_reg, left_reg, right_reg)
-            self.emit("cmp>", result_reg, temp_reg, "0")
+            zero = self.get_const_reg("0")
+            self.emit("cmp>", result_reg, temp_reg, zero)
         return result_reg
 
     def visit_FunctionCall(self, node, symbol_table=None):
@@ -227,7 +253,8 @@ class IRGenerator:
         result_reg = self.get_next_register()
         addr_reg = self.get_next_register()
         temp_reg = self.get_next_register()
-        self.emit("mul", temp_reg, index_reg, "8")
+        word_bytes = self.get_const_reg(self.word_bytes_str)
+        self.emit("mul", temp_reg, index_reg, word_bytes)
         self.emit("add", addr_reg, base_reg, temp_reg)
         self.emit("ld", result_reg, addr_reg)
         return result_reg
@@ -250,14 +277,14 @@ class IRGenerator:
     def visit_ExprList(self, node):
         result_reg = self.get_next_register()
         size = len(node.exprs)
-        bytes_needed = size * 8
+        bytes_needed = size * int(self.word_bytes_str)
         self.emit("mov", result_reg, bytes_needed)
         self.emit("call", "mem", result_reg)
         for i, expr in enumerate(node.exprs):
             expr_reg = self.visit_expression(expr)
             offset_reg = self.get_next_register()
             addr_reg = self.get_next_register()
-            self.emit("mov", offset_reg, str(i * 8))
+            self.emit("mov", offset_reg, str(i * int(self.word_bytes_str)))
             self.emit("add", addr_reg, result_reg, offset_reg)
             self.emit("st", expr_reg, addr_reg)
         return result_reg
@@ -325,21 +352,30 @@ class IRGenerator:
         symbol = self.symbol_table.get(node.id)
         if symbol:
             symbol.set_register(loop_var_reg)
+        # CRUCIAL: map the loop variable so arr[i] uses this register
+        self.variable_registers[node.id] = loop_var_reg
+
         self.emit("mov", loop_var_reg, start_reg)
+
         loop_label = self.get_next_label("FOR")
         end_label = self.get_next_label("ENDFOR")
         self.loop_stack.append((loop_label, end_label))
         self.emit_label(loop_label)
+
         cond_reg = self.get_next_register()
-        self.emit("cmp>", cond_reg, loop_var_reg, end_reg)
+        # Stop when i >= end (non-inclusive upper bound)
+        self.emit("cmp>=", cond_reg, loop_var_reg, end_reg)
         self.emit("jnz", cond_reg, end_label)
+
         if hasattr(node.for_statement, 'accept'):
             node.for_statement.accept(self)
         elif isinstance(node.for_statement, list):
             for stmt in node.for_statement:
                 if hasattr(stmt, 'accept'):
                     stmt.accept(self)
-        self.emit("add", loop_var_reg, loop_var_reg, "1")
+
+        one = self.get_const_reg("1")
+        self.emit("add", loop_var_reg, loop_var_reg, one)
         self.emit("jmp", loop_label)
         self.emit_label(end_label)
         self.loop_stack.pop()

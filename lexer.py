@@ -28,8 +28,10 @@ reserved = {
 
 tokens = (
     'NUMBER', 'PLUS', 'MINUS', 'MULTIPLY', 'DIVIDE', 'LPAREN', 'RPAREN',
-    'LCURLYEBR', 'RCURLYEBR', 'LSQBR', 'RSQBR', 'LDBLBR', 'RDBLBR',
-    'SEMI_COLON', 'EQUAL', 'ID', 'COMMENT', 'STRING', 'MSTRING',
+    'LCURLYEBR', 'RCURLYEBR',
+    'LDBLBR', 'RDBLBR',  # define doubles BEFORE singles
+    'LSQBR', 'RSQBR',
+    'SEMI_COLON', 'EQUAL', 'ID', 'STRING', 'MSTRING',
     'LESS_THAN', 'GREATER_THAN', 'COLON_COLON', 'COLON', 'QUESTION',
     'COMMA', 'NOT', 'AND', 'OR', 'EQ', 'NEQ', 'LTE', 'GTE', 'ARROW',
     'FUNK', 'RETURN', 'IF', 'ELSE', 'WHILE', 'FOR', 'TO', 'BEGIN', 'END', 'DO',
@@ -55,7 +57,6 @@ def remove_comments(input_text):
             comment_start = i
             i += 2
             nesting_level = 1
-
             while i < len(result) and nesting_level > 0:
                 if i + 1 < len(result) and result[i] == '<' and result[i + 1] == '/':
                     nesting_level += 1
@@ -65,7 +66,6 @@ def remove_comments(input_text):
                     i += 2
                 else:
                     i += 1
-
             if nesting_level == 0:
                 for j in range(comment_start, i):
                     if result[j] != '\n':
@@ -101,10 +101,10 @@ t_MULTIPLY = r'\*'
 t_DIVIDE = r'\/'
 t_LPAREN = r'\('
 t_RPAREN = r'\)'
-t_LSQBR = r'\['
-t_RSQBR = r'\]'
 t_LDBLBR = r'\[\['
 t_RDBLBR = r'\]\]'
+t_LSQBR = r'\['
+t_RSQBR = r'\]'
 t_LCURLYEBR = r'\{'
 t_RCURLYEBR = r'\}'
 t_SEMI_COLON = r';'
@@ -147,14 +147,12 @@ def t_whitespace(t):
 
 
 def t_error(t):
+    # collect, don't print
     if not t.value:
-        print(f"Lexer error: empty token at line {t.lineno}")
+        t.lexer.errors.append(f"Lexer error: empty token at line {t.lineno}")
         t.lexer.skip(1)
-        return None
-
+        return
     ch = t.value[0]
-
-    # Handle known illegal patterns
     error_patterns = {
         '@': r'@[a-zA-Z_][a-zA-Z_0-9]*',
         '#': r'#[a-zA-Z_][a-zA-Z_0-9]*',
@@ -166,40 +164,39 @@ def t_error(t):
         '""': r'""[^"]',
         "''": r"''[^']",
     }
-
-    # Handle strings and triple-quoted strings
     if ch in ['"', "'"]:
         if t.value.startswith('"""'):
             match = re.match(r'"""[^"]*', t.value)
             if match:
-                print(f"Unclosed multi-line string at line {t.lineno}")
+                t.lexer.errors.append(f"Unclosed multi-line string at line {t.lineno}")
                 t.lexer.skip(len(match.group(0)))
-                return None
+                return
         else:
-            match = re.match(rf'{ch}[^{ch}\\]*(?:\\.[^{ch}\\]*)*', t.value)
+            match = re.match(rf'{re.escape(ch)}[^{re.escape(ch)}\\]*(?:\\.[^{re.escape(ch)}\\]*)*', t.value)
             if match:
-                print(f"Unclosed string at line {t.lineno}")
+                t.lexer.errors.append(f"Unclosed string at line {t.lineno}")
                 t.lexer.skip(len(match.group(0)))
-                return None
-
-    # Handle specific patterns
+                return
     for first_char, pattern in error_patterns.items():
         if t.value.startswith(first_char):
             match = re.match(pattern, t.value)
             if match:
-                print(f"Illegal token '{match.group(0)}' at line {t.lineno}")
+                t.lexer.errors.append(f"Illegal token '{match.group(0)}' at line {t.lineno}")
                 t.lexer.skip(len(match.group(0)))
-                return None
-
-    # Default: single illegal character
-    print(f"Illegal character '{ch}' at line {t.lineno}")
+                return
+    t.lexer.errors.append(f"Illegal character '{ch}' at line {t.lineno}")
     t.lexer.skip(1)
-    return None  # <- ensure always returns None
 
 
 lexer = lex.lex()
-
 lexer.column = 1
+lexer.errors = []  # collect errors here
+
+
+def reset_lexer_state():
+    lexer.lineno = 1
+    lexer.column = 1
+    lexer.errors.clear()
 
 
 def find_column(input_text, token):
@@ -211,21 +208,16 @@ def find_column(input_text, token):
     return column
 
 
-def tokenize(input_text):
-    processed_text = remove_comments(input_text)
-    lexer.input(processed_text)
-    lexer.lineno = 1
-    lexer.column = 1
+def tokenize(input_text, *, preprocessed=False):
+    text = input_text if preprocessed else remove_comments(input_text)
+    reset_lexer_state()
+    lexer.input(text)
     tokens_list = []
-
     while True:
         tok = lexer.token()
         if not tok:
             break
-
-        tok.column = find_column(processed_text, tok)
-
+        tok.column = find_column(text, tok)
         lexer.column += len(str(tok.value))
-
         tokens_list.append(tok)
-    return tokens_list
+    return tokens_list, list(lexer.errors)
