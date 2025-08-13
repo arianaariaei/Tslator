@@ -289,7 +289,7 @@ class IRGenerator:
             self.emit("mov", "r0", "0")
         self.emit("ret")
 
-    def visit_IfOrIfElseInstruction(self, node):
+    def visit_IfOrIfElseInstruction(self, node, symbol_table=None):
         cond_reg = self.visit_expression(node.cond)
         if node.else_statement:
             else_label = self.get_next_label("ELSE")

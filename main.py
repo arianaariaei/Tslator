@@ -89,7 +89,7 @@ def generate_ir_code(ast, symbol_table):
 
 
 def main():
-    filename = sys.argv[1] if len(sys.argv) > 1 else "input/sample_code.tes"
+    filename = sys.argv[1] if len(sys.argv) > 1 else "input/sample_code.txt"
 
     try:
         with open(filename, 'r') as f:

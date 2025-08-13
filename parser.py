@@ -256,28 +256,14 @@ def p_builtin_methods(p):
         p[0] = AST.FunctionCall(id=p[1], args=p[3], pos=p.lineno(1))
 
 
-def p_error(p):
-    if not p:
-        print("Syntax error at EOF")
-        return
-
-    print(f"Syntax error at token {p.type} ('{p.value}') at line {p.lineno}")
-
-    while True:
-        tok = parser.token()
-        if not tok:
-            break
-        if tok.type in ('SEMI_COLON', 'RCURLYEBR', 'END'):
-            break
-
-    parser.errok()
-    return tok
+def p_error(p: yacc.YaccProduction):
+    pass
 
 
 parser = yacc.yacc(start='prog', debug=True)
 
 # Read input
-with open("input/sample_code.tes", "r") as file:
+with open("input/sample_code.txt", "r") as file:
     source = file.read()
 
 # Parse
